@@ -1,0 +1,18 @@
+import { config } from 'dotenv';
+import { DataSource } from 'typeorm';
+
+config();
+
+export default new DataSource({
+  type: 'postgres',
+  host: process.env.POSTGRES_HOST,
+  port: parseInt(process.env.POSTGRES_PORT as string, 10),
+  username: process.env.POSTGRES_USER,
+  password: process.env.POSTGRES_PASS,
+  database: process.env.POSTGRES_DB,
+  logging: false,
+  synchronize: false,
+  migrationsTableName: 'migrations',
+  migrations: ['libs/database/src/migrations/**/*{.ts,.js}'],
+  entities: ['libs/database/src/entities/*.entity{.ts,.js}'],
+});
