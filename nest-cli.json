@@ -63,6 +63,24 @@
       "compilerOptions": {
         "tsConfigPath": "apps/my-project/tsconfig.app.json"
       }
+    },
+    "scanner": {
+      "type": "library",
+      "root": "libs/scanner",
+      "entryFile": "index",
+      "sourceRoot": "libs/scanner/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/scanner/tsconfig.lib.json"
+      }
+    },
+    "media": {
+      "type": "library",
+      "root": "libs/media",
+      "entryFile": "index",
+      "sourceRoot": "libs/media/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/media/tsconfig.lib.json"
+      }
     }
   }
 }

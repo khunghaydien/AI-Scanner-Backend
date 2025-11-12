@@ -18,12 +18,36 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
     "paths": {
-      "@app/auth": ["libs/auth/src"],
-      "@app/auth/*": ["libs/auth/src/*"],
-      "@app/database": ["libs/database/src"],
-      "@app/database/*": ["libs/database/src/*"],
-      "@app/common": ["libs/common/src"],
-      "@app/common/*": ["libs/common/src/*"]
+      "@app/auth": [
+        "libs/auth/src"
+      ],
+      "@app/auth/*": [
+        "libs/auth/src/*"
+      ],
+      "@app/common": [
+        "libs/common/src"
+      ],
+      "@app/common/*": [
+        "libs/common/src/*"
+      ],
+      "@app/database": [
+        "libs/database/src"
+      ],
+      "@app/database/*": [
+        "libs/database/src/*"
+      ],
+      "@app/scanner": [
+        "libs/scanner/src"
+      ],
+      "@app/scanner/*": [
+        "libs/scanner/src/*"
+      ],
+      "@app/media": [
+        "libs/media/src"
+      ],
+      "@app/media/*": [
+        "libs/media/src/*"
+      ]
     }
   }
 }

@@ -1,4 +1,14 @@
-import { BeforeInsert, BeforeUpdate, Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  BeforeInsert,
+  BeforeUpdate,
+  Column,
+  Entity,
+  Index,
+  OneToMany,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Media } from './media.entity';
+
 @Entity('user')
 @Index(['updatedAt', 'userName'])
 export class User {
@@ -76,6 +86,9 @@ export class User {
     nullable: false,
   })
   updatedAt: number;
+
+  @OneToMany(() => Media, (media) => media.user)
+  media: Media[];
 
   @BeforeInsert()
   createDates() {

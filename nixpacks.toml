@@ -1,0 +1,15 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "python3", "tesseract"]
+
+[phases.install]
+cmds = [
+  "npm ci --only=production",
+  "pip3 install --no-cache-dir -r scripts/requirements.txt"
+]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/apps/api/main.js"
+

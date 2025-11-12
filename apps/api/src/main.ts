@@ -54,6 +54,12 @@ async function bootstrap() {
   // Apply global exception filters
   app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalFilters(new HttpExceptionFilter());
-  await app.listen(3030);
+  
+  // Get port from environment variable (Railway uses PORT)
+  const port = process.env.PORT || 3030;
+  await app.listen(port);
+  
+  console.log(`🚀 Application is running on port: ${port}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 }
 bootstrap();

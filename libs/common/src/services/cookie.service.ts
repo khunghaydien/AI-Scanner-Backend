@@ -37,11 +37,30 @@ export class CookieService {
   }
 
   private getCookieConfig() {
-    const isProduction = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+    // Detect if we're in production/staging environment
+    const isProduction = 
+      process.env.NODE_ENV === 'production' || 
+      process.env.NODE_ENV === 'staging' ||
+      process.env.RAILWAY_ENVIRONMENT === 'production';
+    
+    // Detect if we're behind HTTPS proxy (Railway, Heroku, etc.)
+    // Railway proxies HTTPS requests, so we need secure cookies
+    const isSecure = 
+      isProduction || 
+      process.env.RAILWAY_ENVIRONMENT !== undefined ||
+      process.env.FORCE_SECURE_COOKIES === 'true';
+    
+    const sameSite = this.getSameSiteValue();
+    
+    // If sameSite is 'none', secure MUST be true (browser requirement)
+    const secure = sameSite === 'none' ? true : isSecure;
+    
     return {
       httpOnly: true,
-      secure: isProduction, // Secure cookies chỉ trong production (HTTPS)
-      sameSite: this.getSameSiteValue() as 'strict' | 'lax' | 'none',
+      secure: secure,
+      sameSite: sameSite as 'strict' | 'lax' | 'none',
+      // Don't set domain - let browser handle it automatically
+      // path: '/', // Explicitly set path if needed
     };
   }
 

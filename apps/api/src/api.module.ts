@@ -4,7 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
 import { AuthModule } from './auth/auth.module';
+import { MediaModule } from './media/media.module';
 import { User } from '@app/database/entities/user.entity';
+import { Media } from '@app/database/entities/media.entity';
 
 @Module({
   imports: [
@@ -18,12 +20,13 @@ import { User } from '@app/database/entities/user.entity';
       username: process.env.POSTGRES_USER,
       password: process.env.POSTGRES_PASS,
       database: process.env.POSTGRES_DB,
-      entities: [User],
+      entities: [User, Media],
       synchronize: false,
       logging: false,
     }),
     AuthModule,
-    TypeOrmModule.forFeature([User]),
+    MediaModule,
+    TypeOrmModule.forFeature([User, Media]),
   ],
   controllers: [ApiController],
   providers: [ApiService],
