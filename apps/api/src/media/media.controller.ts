@@ -94,4 +94,25 @@ export class MediaController {
       'File uploaded and scanned successfully',
     );
   }
+
+  @Post('extract-background')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file'))
+  async extractDocumentFromBackground(
+    @Request() req: any,
+    @UploadedFile(new ParseFilePipe({ fileIsRequired: true }))
+    file: Express.Multer.File,
+    @Body() uploadDto: UploadFileDto,
+  ) {
+    const userId = req.user.id;
+    const result = await this.mediaService.extractDocumentFromBackground(
+      userId,
+      file,
+      uploadDto,
+    );
+    return ResponseDto.created(
+      result,
+      'Document extracted from background successfully',
+    );
+  }
 }

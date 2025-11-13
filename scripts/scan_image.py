@@ -56,11 +56,7 @@ def scan_image(input_path: str, output_path: str) -> None:
         kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel_close, iterations=1)
 
-        # === Remove small specks (tiny black dots) ===
-        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in contours:
-            if cv2.contourArea(c) < 50:  # adjust this threshold if needed
-                cv2.drawContours(cleaned, [c], -1, (255, 255, 255), -1)
+        # # === Remove small specks (tiny black dots) ===
 
         # === Convert to PIL image for PDF generation ===
         pil_image = Image.fromarray(cleaned)

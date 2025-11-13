@@ -348,17 +348,24 @@ export class MediaService {
       fs.writeFileSync(tempInputPath, imageBuffer);
 
       // Run Python script
+      console.log(`Running: ${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`);
       const { stdout, stderr } = await this.execAsync(
         `${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`,
       );
 
+      // Log output for debugging
+      if (stdout) {
+        console.log('Python script stdout:', stdout);
+      }
       if (stderr && !stderr.includes('Warning')) {
         console.error('Python script stderr:', stderr);
       }
 
       // Read scanned image
       if (!fs.existsSync(outputPath)) {
-        throw new Error('Scanned image file was not created');
+        throw new Error(
+          `Scanned image file was not created. Output path: ${outputPath}. Python stdout: ${stdout}. Python stderr: ${stderr}`,
+        );
       }
 
       const scannedBuffer = fs.readFileSync(outputPath);
@@ -384,6 +391,71 @@ export class MediaService {
       console.error('Error scanning image with Python:', error);
       throw new BadRequestException(
         'Failed to scan image: ' + (error.message || 'Unknown error'),
+      );
+    }
+  }
+
+  /**
+   * Extract document from background using Python script
+   */
+  private async extractDocumentWithPython(
+    imageBuffer: Buffer,
+    outputPath: string,
+  ): Promise<Buffer> {
+    const scriptPath = path.join(process.cwd(), 'scripts', 'extract_document.py');
+    const tempInputPath = path.join(os.tmpdir(), `extract-input-${Date.now()}.png`);
+
+    try {
+      // Detect Python command
+      const pythonCmd = await this.detectPythonCommand();
+
+      // Write input image to temp file
+      fs.writeFileSync(tempInputPath, imageBuffer);
+
+      // Run Python script
+      console.log(`Running: ${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`);
+      const { stdout, stderr } = await this.execAsync(
+        `${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`,
+      );
+
+      // Log output for debugging
+      if (stdout) {
+        console.log('Python script stdout:', stdout);
+      }
+      if (stderr && !stderr.includes('Warning')) {
+        console.error('Python script stderr:', stderr);
+      }
+
+      // Read extracted image
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(
+          `Extracted image file was not created. Output path: ${outputPath}. Python stdout: ${stdout}. Python stderr: ${stderr}`,
+        );
+      }
+
+      const extractedBuffer = fs.readFileSync(outputPath);
+
+      // Cleanup temp files
+      if (fs.existsSync(tempInputPath)) {
+        fs.unlinkSync(tempInputPath);
+      }
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+
+      return extractedBuffer;
+    } catch (error) {
+      // Cleanup on error
+      if (fs.existsSync(tempInputPath)) {
+        fs.unlinkSync(tempInputPath);
+      }
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+
+      console.error('Error extracting document with Python:', error);
+      throw new BadRequestException(
+        'Failed to extract document: ' + (error.message || 'Unknown error'),
       );
     }
   }
@@ -415,31 +487,29 @@ export class MediaService {
     }
 
     try {
-      // Step 1: Upload original image
-      const originalMedia = await this.uploadFile(userId, file, uploadDto);
-      console.log('✅ Original image uploaded:', originalMedia.id);
+      // Step 1: Extract document from background (nhận ảnh trực tiếp từ buffer)
+      const tempExtractedPath = path.join(
+        os.tmpdir(),
+        `extracted-${Date.now()}.png`,
+      );
+      console.log('🔍 Step 1: Extracting document from background...');
+      const extractedBuffer = await this.extractDocumentWithPython(
+        file.buffer, // Truyền trực tiếp buffer từ file upload
+        tempExtractedPath,
+      );
 
-      // Step 2: Download the uploaded image from R2
-      const fileKey = originalMedia.fileUrl.split('/').pop();
-      if (!fileKey) {
-        throw new BadRequestException('Invalid file URL');
-      }
-
-      console.log('📥 Downloading image from R2 for scanning...');
-      const imageBuffer = await this.downloadFileFromR2(fileKey);
-
-      // Step 3: Scan image using Python (output as PDF)
-      const tempOutputPath = path.join(
+      // Step 2: Scan extracted image using Python (output as PDF)
+      const tempScannedPath = path.join(
         os.tmpdir(),
         `scanned-${Date.now()}.pdf`,
       );
-      console.log('🔍 Scanning image to PDF A4 (black & white)...');
+      console.log('🔍 Step 2: Scanning extracted image to PDF A4 (black & white)...');
       const scannedBuffer = await this.scanImageWithPython(
-        imageBuffer,
-        tempOutputPath,
+        extractedBuffer, // Scan ảnh đã extract, không phải ảnh gốc
+        tempScannedPath,
       );
 
-      // Step 4: Create a file-like object for the scanned PDF
+      // Step 3: Create a file-like object for the scanned PDF
       const originalNameWithoutExt = path.parse(file.originalname).name;
       const scannedFile: Express.Multer.File = {
         fieldname: 'file',
@@ -454,22 +524,121 @@ export class MediaService {
         stream: null as any,
       };
 
-      // Step 5: Upload scanned PDF
+      // Step 4: Upload scanned PDF to R2 (chỉ upload output cuối cùng)
       const scannedMedia = await this.uploadFile(userId, scannedFile, {
         description: uploadDto?.description
           ? `Scanned PDF version of: ${uploadDto.description}`
           : 'Scanned document PDF',
       });
-      console.log('✅ Scanned PDF uploaded:', scannedMedia.id);
+      console.log('✅ Scanned PDF uploaded to R2:', scannedMedia.id);
+
+      // Step 5: Tạo original Media record (chỉ lưu metadata, không upload file lên R2)
+      const originalMedia = this.mediaRepository.create({
+        user: user,
+        fileUrl: '', // Không có fileUrl vì không upload lên R2
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        fileType: this.getFileType(file.mimetype),
+        description: uploadDto?.description || 'Original image (not uploaded to R2)',
+        status: 'active',
+      });
+      const savedOriginalMedia = await this.mediaRepository.save(originalMedia);
 
       return {
-        original: originalMedia,
+        original: savedOriginalMedia,
         scanned: scannedMedia,
       };
     } catch (error) {
       console.error('Error in uploadFileScanner:', error);
       throw new BadRequestException(
         'Failed to upload and scan file: ' + (error.message || 'Unknown error'),
+      );
+    }
+  }
+
+  /**
+   * Extract document from background (e.g., ID card from black background)
+   * Returns both original image and extracted image Media
+   */
+  async extractDocumentFromBackground(
+    userId: string,
+    file: Express.Multer.File,
+    uploadDto?: UploadFileDto,
+  ): Promise<{ original: Media; scanned: Media }> {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    // Validate that it's an image
+    if (!this.allowedImageMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Invalid file type. Only image files are allowed for background extraction.',
+      );
+    }
+
+    // Check if user exists
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    try {
+      // Step 1: Extract document from background using Python (nhận ảnh trực tiếp từ buffer)
+      const tempOutputPath = path.join(
+        os.tmpdir(),
+        `extracted-${Date.now()}.png`,
+      );
+      console.log('🔍 Extracting document from background...');
+      const extractedBuffer = await this.extractDocumentWithPython(
+        file.buffer, // Truyền trực tiếp buffer từ file upload, không cần download từ R2
+        tempOutputPath,
+      );
+
+      // Step 2: Create a file-like object for the extracted image
+      const originalNameWithoutExt = path.parse(file.originalname).name;
+      const extractedFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: `extracted-${originalNameWithoutExt}.png`,
+        encoding: '7bit',
+        mimetype: 'image/png',
+        size: extractedBuffer.length,
+        buffer: extractedBuffer,
+        destination: '',
+        filename: `extracted-${originalNameWithoutExt}.png`,
+        path: '',
+        stream: null as any,
+      };
+
+      // Step 3: Upload extracted image to R2 (chỉ upload output, không upload ảnh gốc)
+      const scannedMedia = await this.uploadFile(userId, extractedFile, {
+        description: uploadDto?.description
+          ? `Extracted document from background: ${uploadDto.description}`
+          : 'Extracted document from background',
+      });
+      console.log('✅ Extracted image uploaded to R2:', scannedMedia.id);
+
+      // Step 4: Tạo original Media record (chỉ lưu metadata, không upload file lên R2)
+      const originalMedia = this.mediaRepository.create({
+        user: user,
+        fileUrl: '', // Không có fileUrl vì không upload lên R2
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        fileType: this.getFileType(file.mimetype),
+        description: uploadDto?.description || 'Original image (not uploaded to R2)',
+        status: 'active',
+      });
+      const savedOriginalMedia = await this.mediaRepository.save(originalMedia);
+
+      return {
+        original: savedOriginalMedia,
+        scanned: scannedMedia,
+      };
+    } catch (error) {
+      console.error('Error in extractDocumentFromBackground:', error);
+      throw new BadRequestException(
+        'Failed to extract document from background: ' + (error.message || 'Unknown error'),
       );
     }
   }
