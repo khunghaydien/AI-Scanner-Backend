@@ -28,9 +28,17 @@ RUN python3 -m venv /app/venv
 # Copy Python requirements and script
 COPY scripts/ ./scripts/
 
-# Install Python dependencies in virtual environment
+# Install Python dependencies in virtual environment (BUILD TIME - not runtime)
+# This installs all packages: opencv-python, pytesseract, Pillow, numpy, img2pdf, rembg
 RUN /app/venv/bin/pip install --upgrade pip && \
     /app/venv/bin/pip install --no-cache-dir -r scripts/requirements.txt
+
+# Verify all packages are installed correctly
+RUN /app/venv/bin/python3 -c "import cv2; import pytesseract; from PIL import Image; import numpy as np; import img2pdf; from rembg import remove; print('✅ All Python packages installed successfully')"
+
+# Pre-download all rembg models to avoid downloading during runtime (prevents OOM)
+# This downloads all models during build time so they're cached in the Docker image
+RUN /app/venv/bin/python3 scripts/preload_rembg_models.py
 
 # Copy application code
 COPY . .

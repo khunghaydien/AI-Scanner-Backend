@@ -70,16 +70,38 @@ def extract_main_object(image):
         # Nền sáng (trắng/sáng) → không cắt, trả về ảnh gốc
         return original
 
+    # === Step 0.5: Resize ảnh lớn để tránh OOM nhưng vẫn giữ chất lượng ===
+    # rembg tốn nhiều memory với ảnh lớn, resize xuống max 1000px để tránh OOM trên Railway
+    # Sau đó scale lại kết quả về tỷ lệ tương ứng
+    max_dimension = 1000  # Kích thước tối đa để xử lý với rembg (giảm xuống để tránh OOM)
+    scale = 1.0
+    resized_image = image
+    original_h, original_w = h, w
+    
+    if max(h, w) > max_dimension:
+        scale = max_dimension / max(h, w)
+        new_width = int(w * scale)
+        new_height = int(h * scale)
+        resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        print(f"Resized image from {w}x{h} to {new_width}x{new_height} to avoid OOM", file=sys.stderr)
+        h, w = new_height, new_width
+
     # === Step 1: Use rembg to remove background (chỉ khi nền tối) ===
-    # Convert BGR to RGB for PIL
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(image_rgb)
-    
-    # Remove background using rembg (returns RGBA with transparent background)
-    output = remove(pil_image)
-    
-    # Convert back to numpy array
-    output_array = np.array(output)
+    try:
+        # Convert BGR to RGB for PIL
+        image_rgb = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(image_rgb)
+        
+        # Remove background using rembg với tham số tối ưu
+        # only_person=False để xử lý document tốt hơn
+        # alpha_matting=False để giảm memory usage
+        output = remove(pil_image, only_person=False, alpha_matting=False)
+        
+        # Convert back to numpy array
+        output_array = np.array(output)
+    except Exception as e:
+        print(f"Error in rembg: {str(e)}, returning original image", file=sys.stderr)
+        return original
     
     # === Step 2: Use OpenCV to find bounding box of non-transparent pixels ===
     # Extract alpha channel (transparency mask)
@@ -97,6 +119,9 @@ def extract_main_object(image):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
+        # Nếu không tìm thấy contour, scale lại về kích thước gốc nếu đã resize
+        if scale < 1.0:
+            return cv2.resize(resized_image, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
         return original
     
     # Get the largest contour (main object)
@@ -105,6 +130,8 @@ def extract_main_object(image):
     
     # If object is too small (< 5% of image), return original
     if area < (w * h * 0.05):
+        if scale < 1.0:
+            return cv2.resize(resized_image, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
         return original
     
     # === Step 3: Get bounding rectangle (tự động theo kích thước object) ===
@@ -147,6 +174,14 @@ def extract_main_object(image):
     
     # Convert RGB to BGR for OpenCV
     result_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
+    
+    # === Step 6: Scale lại kết quả về kích thước tương ứng với ảnh gốc nếu đã resize ===
+    if scale < 1.0:
+        # Tính kích thước mới dựa trên tỷ lệ scale và kích thước crop
+        new_crop_width = int(crop_width / scale)
+        new_crop_height = int(crop_height / scale)
+        # Scale lại với interpolation tốt để giữ chất lượng
+        result_bgr = cv2.resize(result_bgr, (new_crop_width, new_crop_height), interpolation=cv2.INTER_LINEAR)
     
     # Kích thước output: (crop_height, crop_width) - tự động theo kích thước object
     # Không fix cứng, sẽ thay đổi tùy theo từng ảnh
