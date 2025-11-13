@@ -396,6 +396,71 @@ export class MediaService {
   }
 
   /**
+   * Scan color image using Python (preserves colors, not black & white)
+   */
+  private async scanImageColorWithPython(
+    imageBuffer: Buffer,
+    outputPath: string,
+  ): Promise<Buffer> {
+    const scriptPath = path.join(process.cwd(), 'scripts', 'scan_image_color.py');
+    const tempInputPath = path.join(os.tmpdir(), `input-color-${Date.now()}.png`);
+
+    try {
+      // Detect Python command
+      const pythonCmd = await this.detectPythonCommand();
+
+      // Write input image to temp file
+      fs.writeFileSync(tempInputPath, imageBuffer);
+
+      // Run Python script
+      console.log(`Running: ${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`);
+      const { stdout, stderr } = await this.execAsync(
+        `${pythonCmd} "${scriptPath}" "${tempInputPath}" "${outputPath}"`,
+      );
+
+      // Log output for debugging
+      if (stdout) {
+        console.log('Python script stdout:', stdout);
+      }
+      if (stderr && !stderr.includes('Warning')) {
+        console.error('Python script stderr:', stderr);
+      }
+
+      // Read scanned image
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(
+          `Scanned color image file was not created. Output path: ${outputPath}. Python stdout: ${stdout}. Python stderr: ${stderr}`,
+        );
+      }
+
+      const scannedBuffer = fs.readFileSync(outputPath);
+
+      // Cleanup temp files
+      if (fs.existsSync(tempInputPath)) {
+        fs.unlinkSync(tempInputPath);
+      }
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+
+      return scannedBuffer;
+    } catch (error) {
+      // Cleanup on error
+      if (fs.existsSync(tempInputPath)) {
+        fs.unlinkSync(tempInputPath);
+      }
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+
+      console.error('Error scanning color image with Python:', error);
+      throw new BadRequestException(
+        'Failed to scan color image: ' + (error.message || 'Unknown error'),
+      );
+    }
+  }
+
+  /**
    * Extract document from background using Python script
    */
   private async extractDocumentWithPython(
@@ -561,6 +626,104 @@ export class MediaService {
       console.error('Error in uploadFileScanner:', error);
       throw new BadRequestException(
         'Failed to upload and scan file: ' + (error.message || 'Unknown error'),
+      );
+    }
+  }
+
+  /**
+   * Upload image and scan it to PDF (A4, color preserved)
+   * Returns both original image and scanned PDF Media
+   * Extracts document from background first, then scans with colors preserved
+   */
+  async uploadFileScannerColor(
+    userId: string,
+    file: Express.Multer.File,
+    uploadDto?: UploadFileDto,
+  ): Promise<{ original: Media; scanned: Media }> {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    // Validate that it's an image
+    if (!this.allowedImageMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Invalid file type. Only image files are allowed for scanning.',
+      );
+    }
+
+    // Check if user exists
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    try {
+      // Step 1: Extract document from background (nhận ảnh trực tiếp từ buffer)
+      const tempExtractedPath = path.join(
+        os.tmpdir(),
+        `extracted-color-${Date.now()}.png`,
+      );
+      console.log('🔍 Step 1: Extracting document from background...');
+      const extractedBuffer = await this.extractDocumentWithPython(
+        file.buffer, // Truyền trực tiếp buffer từ file upload
+        tempExtractedPath,
+      );
+
+      // Step 2: Scan extracted image using Python (output as PDF, color preserved)
+      const tempScannedPath = path.join(
+        os.tmpdir(),
+        `scanned-color-${Date.now()}.pdf`,
+      );
+      console.log('🔍 Step 2: Scanning extracted image to PDF A4 (color preserved)...');
+      const scannedBuffer = await this.scanImageColorWithPython(
+        extractedBuffer, // Scan ảnh đã extract, không phải ảnh gốc
+        tempScannedPath,
+      );
+
+      // Step 3: Create a file-like object for the scanned PDF
+      const originalNameWithoutExt = path.parse(file.originalname).name;
+      const scannedFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: `scanned-color-${originalNameWithoutExt}.pdf`,
+        encoding: '7bit',
+        mimetype: 'application/pdf',
+        size: scannedBuffer.length,
+        buffer: scannedBuffer,
+        destination: '',
+        filename: `scanned-color-${originalNameWithoutExt}.pdf`,
+        path: '',
+        stream: null as any,
+      };
+
+      // Step 4: Upload scanned PDF to R2 (chỉ upload output cuối cùng)
+      const scannedMedia = await this.uploadFile(userId, scannedFile, {
+        description: uploadDto?.description
+          ? `Scanned color PDF version of: ${uploadDto.description}`
+          : 'Scanned color document PDF',
+      });
+      console.log('✅ Scanned color PDF uploaded to R2:', scannedMedia.id);
+
+      // Step 5: Tạo original Media record (chỉ lưu metadata, không upload file lên R2)
+      const originalMedia = this.mediaRepository.create({
+        user: user,
+        fileUrl: '', // Không có fileUrl vì không upload lên R2
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        fileType: this.getFileType(file.mimetype),
+        description: uploadDto?.description || 'Original image (not uploaded to R2)',
+        status: 'active',
+      });
+      const savedOriginalMedia = await this.mediaRepository.save(originalMedia);
+
+      return {
+        original: savedOriginalMedia,
+        scanned: scannedMedia,
+      };
+    } catch (error) {
+      console.error('Error in uploadFileScannerColor:', error);
+      throw new BadRequestException(
+        'Failed to upload and scan color file: ' + (error.message || 'Unknown error'),
       );
     }
   }

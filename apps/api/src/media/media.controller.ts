@@ -95,6 +95,27 @@ export class MediaController {
     );
   }
 
+  @Post('scanner-color')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadAndScanColorFile(
+    @Request() req: any,
+    @UploadedFile(new ParseFilePipe({ fileIsRequired: true }))
+    file: Express.Multer.File,
+    @Body() uploadDto: UploadFileDto,
+  ) {
+    const userId = req.user.id;
+    const result = await this.mediaService.uploadFileScannerColor(
+      userId,
+      file,
+      uploadDto,
+    );
+    return ResponseDto.created(
+      result,
+      'File uploaded and scanned with color preserved successfully',
+    );
+  }
+
   @Post('extract-background')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file'))
