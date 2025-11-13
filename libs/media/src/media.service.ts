@@ -426,10 +426,18 @@ export class MediaService {
         console.error('Python script stderr:', stderr);
       }
 
+      // Check if process was killed (OOM)
+      if (stderr && stderr.includes('Killed')) {
+        console.warn('⚠️  Python process was killed (likely OOM), rembg may have failed');
+        // Continue to check if output file exists (fallback may have worked)
+      }
+
       // Read extracted image
       if (!fs.existsSync(outputPath)) {
+        // If killed and no output, it means rembg failed and fallback didn't work
+        // This could be due to insufficient memory even for OpenCV
         throw new Error(
-          `Extracted image file was not created. Output path: ${outputPath}. Python stdout: ${stdout}. Python stderr: ${stderr}`,
+          `Extracted image file was not created. Process may have been killed due to OOM. Output path: ${outputPath}. Python stdout: ${stdout}. Python stderr: ${stderr}`,
         );
       }
 

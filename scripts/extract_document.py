@@ -71,9 +71,12 @@ def extract_main_object(image):
         return original
 
     # === Step 0.5: Resize ảnh lớn để tránh OOM nhưng vẫn giữ chất lượng ===
-    # rembg tốn nhiều memory với ảnh lớn, resize xuống max 1000px để tránh OOM trên Railway
-    # Sau đó scale lại kết quả về tỷ lệ tương ứng
-    max_dimension = 1000  # Kích thước tối đa để xử lý với rembg (giảm xuống để tránh OOM)
+    # max_dimension: Kích thước tối đa (chiều dài nhất - width hoặc height) của ảnh trước khi xử lý với rembg
+    # - Nếu ảnh > max_dimension → resize xuống max_dimension (giữ tỷ lệ)
+    # - Sau khi xử lý xong → scale lại kết quả về tỷ lệ tương ứng với ảnh gốc
+    # - Kích thước lớn hơn = chính xác hơn nhưng tốn nhiều memory hơn
+    # - Với 1GB RAM trên Railway: nên dùng 500-600px để cân bằng giữa chất lượng và memory
+    max_dimension = 500  # 500px: cân bằng tốt cho 1GB RAM (chính xác đủ + không OOM)
     scale = 1.0
     resized_image = image
     original_h, original_w = h, w
