@@ -10,9 +10,10 @@ import {
 } from 'typeorm';
 import { User } from './user.entity';
 
-@Entity('media')
+@Entity('files')
 @Index(['createdAt', 'id'])
-export class Media {
+@Index(['updatedAt', 'id'])
+export class File {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -108,5 +109,4 @@ export class Media {
     this.updatedAt = Date.now();
   }
 }
-
 

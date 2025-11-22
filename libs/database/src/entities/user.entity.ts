@@ -7,7 +7,7 @@ import {
   OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { Media } from './media.entity';
+import { File } from './file.entity';
 
 @Entity('user')
 @Index(['updatedAt', 'userName'])
@@ -87,8 +87,8 @@ export class User {
   })
   updatedAt: number;
 
-  @OneToMany(() => Media, (media) => media.user)
-  media: Media[];
+  @OneToMany(() => File, (file) => file.user)
+  files: File[];
 
   @BeforeInsert()
   createDates() {

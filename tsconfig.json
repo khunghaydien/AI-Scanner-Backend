@@ -42,11 +42,11 @@
       "@app/scanner/*": [
         "libs/scanner/src/*"
       ],
-      "@app/media": [
-        "libs/media/src"
+      "@app/files": [
+        "libs/files/src"
       ],
-      "@app/media/*": [
-        "libs/media/src/*"
+      "@app/files/*": [
+        "libs/files/src/*"
       ]
     }
   }

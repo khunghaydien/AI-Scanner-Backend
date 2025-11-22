@@ -109,8 +109,7 @@
     "moduleNameMapper": {
       "^@app/auth(|/.*)$": "<rootDir>/libs/auth/src/$1",
       "^@app/database(|/.*)$": "<rootDir>/libs/database/src/$1",
-      "^@app/scanner(|/.*)$": "<rootDir>/libs/scanner/src/$1",
-      "^@app/media(|/.*)$": "<rootDir>/libs/media/src/$1"
+      "^@app/scanner(|/.*)$": "<rootDir>/libs/scanner/src/$1"
     }
   }
 }
