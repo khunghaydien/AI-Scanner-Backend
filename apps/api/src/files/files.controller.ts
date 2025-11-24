@@ -23,7 +23,7 @@ import { FilesService, UpdateFileDto, DeleteFilesDto, GetFilesDto } from '@app/f
 @Controller('files')
 @UseGuards(JwtAuthGuard)
 export class FilesController {
-  constructor(private readonly filesService: FilesService) {}
+  constructor(private readonly filesService: FilesService) { }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -54,6 +54,14 @@ export class FilesController {
       },
       'Files retrieved successfully',
     );
+  }
+
+  @Get('total')
+  @HttpCode(HttpStatus.OK)
+  async getTotalFilesCount(@Request() req: any) {
+    const userId = req.user.id;
+    const totalCount = await this.filesService.getTotalFilesCount(userId);
+    return ResponseDto.success(totalCount, 'Total files count retrieved successfully');
   }
 
   @Get(':id')

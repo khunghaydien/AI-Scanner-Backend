@@ -243,6 +243,10 @@ export class FilesService {
     };
   }
 
+  async getTotalFilesCount(userId: string): Promise<number> {
+    return await this.fileRepository.count({ where: { user: { id: userId }, status: 'active' } });
+  }
+
   /**
    * Get single file by ID
    */
