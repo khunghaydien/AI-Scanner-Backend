@@ -22,12 +22,21 @@ export class File {
   user: User;
 
   @Column({
-    name: 'file_url',
-    type: 'text',
+    name: 'file_urls',
+    type: 'jsonb',
     nullable: false,
-    comment: 'URL of the file stored in Cloudflare R2',
+    comment: 'URLs of the files stored in Cloudflare R2',
   })
-  fileUrl: string;
+  fileUrls: string[];
+
+  @Column({
+    name: 'thumbnail_url',
+    type: 'varchar',
+    nullable: false,
+    length: 255,
+    comment: 'Thumbnail URL (usually the first file)',
+  })
+  thumbnailUrl: string;
 
   @Column({
     name: 'file_name',
@@ -37,32 +46,6 @@ export class File {
     comment: 'Original file name',
   })
   fileName: string;
-
-  @Column({
-    name: 'file_size',
-    type: 'bigint',
-    nullable: true,
-    comment: 'File size in bytes',
-  })
-  fileSize: number;
-
-  @Column({
-    name: 'mime_type',
-    type: 'varchar',
-    nullable: true,
-    length: 100,
-    comment: 'MIME type of the file',
-  })
-  mimeType: string;
-
-  @Column({
-    name: 'file_type',
-    type: 'varchar',
-    nullable: true,
-    length: 50,
-    comment: 'File type: image, document, pdf, excel, etc.',
-  })
-  fileType: string;
 
   @Column({
     name: 'description',

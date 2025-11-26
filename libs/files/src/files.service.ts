@@ -10,21 +10,26 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { File } from '@app/database/entities/file.entity';
 import { User } from '@app/database/entities/user.entity';
-import { UploadFileDto, UpdateFileDto, DeleteFilesDto, GetFilesDto } from './dto';
+import { UpdateFileDto, DeleteFilesDto, GetFilesDto, MergeFilesDto } from './dto';
+
+const execAsync = promisify(exec);
 
 @Injectable()
 export class FilesService {
   private s3Client: S3Client;
   private readonly bucketName: string;
   private readonly r2Endpoint: string;
-  private readonly r2PublicUrl: string;
   private readonly r2Region: string;
 
-  // Allowed file types: images, documents, PDFs, Excel files
+  // Allowed file types: images only
   private readonly allowedMimeTypes = [
-    // Images
     'image/jpeg',
     'image/jpg',
     'image/png',
@@ -32,18 +37,6 @@ export class FilesService {
     'image/webp',
     'image/bmp',
     'image/svg+xml',
-    // Documents
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-    'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
-    // PDF
-    'application/pdf',
-    // Text files
-    'text/plain',
-    'text/csv',
   ];
 
   constructor(
@@ -55,7 +48,6 @@ export class FilesService {
     // Initialize Cloudflare R2 S3 Client
     this.bucketName = process.env.R2_BUCKET_NAME || '';
     this.r2Endpoint = process.env.R2_ENDPOINT_URL || '';
-    this.r2PublicUrl = process.env.R2_PUBLIC_URL || '';
     this.r2Region = process.env.R2_REGION || '';
 
     // Validate R2 credentials
@@ -63,10 +55,6 @@ export class FilesService {
     const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
 
     if (!accessKeyId || !secretAccessKey) {
-      console.error('❌ R2 Credentials Error:');
-      console.error('   R2_ACCESS_KEY_ID:', accessKeyId ? 'Set' : '❌ NOT SET');
-      console.error('   R2_SECRET_ACCESS_KEY:', secretAccessKey ? 'Set' : '❌ NOT SET');
-      console.error('💡 Please set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY environment variables');
       throw new Error(
         'R2 credentials not configured. Please set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY environment variables.',
       );
@@ -79,42 +67,15 @@ export class FilesService {
         accessKeyId: accessKeyId,
         secretAccessKey: secretAccessKey,
       },
+      maxAttempts: 3,
     });
-
-    console.log('✅ Cloudflare R2 Client initialized');
-    console.log(`   Bucket: ${this.bucketName}`);
-    console.log(`   Endpoint: ${this.r2Endpoint}`);
   }
 
   /**
-   * Get file type from MIME type
-   */
-  private getFileType(mimeType: string): string {
-    if (mimeType.startsWith('image/')) {
-      return 'image';
-    }
-    if (mimeType === 'application/pdf') {
-      return 'pdf';
-    }
-    if (
-      mimeType.includes('spreadsheet') ||
-      mimeType.includes('excel') ||
-      mimeType === 'text/csv'
-    ) {
-      return 'excel';
-    }
-    if (
-      mimeType.includes('word') ||
-      mimeType.includes('document') ||
-      mimeType === 'text/plain'
-    ) {
-      return 'document';
-    }
-    return 'other';
-  }
-
-  /**
-   * Upload single or multiple files to Cloudflare R2 and save to database
+   * Upload multiple files to Cloudflare R2 and save a single record with:
+   * - fileUrls: all uploaded file URLs (JSONB array)
+   * - fileName: original name of the first file
+   * - thumbnailUrl: URL of the first file
    */
   async uploadFiles(
     userId: string,
@@ -124,11 +85,11 @@ export class FilesService {
       throw new BadRequestException('No files provided');
     }
 
-    // Validate file types
+    // Validate file types - only images allowed
     for (const file of files) {
       if (!this.allowedMimeTypes.includes(file.mimetype)) {
         throw new BadRequestException(
-          `Invalid file type: ${file.originalname}. Allowed types: images, documents, PDFs, Excel files.`,
+          `Invalid file type: ${file.originalname}. Only image files are allowed (JPEG, PNG, GIF, WebP, BMP, SVG).`,
         );
       }
     }
@@ -140,48 +101,57 @@ export class FilesService {
     }
 
     try {
-      const uploadedFiles: File[] = [];
+      const uploadPromises = files.map((file, index) => {
+        return (async () => {
+          try {
+            const timestamp = Date.now();
+            const randomString = Math.random().toString(36).substring(2, 15);
+            const fileExtension = file.originalname.split('.').pop();
+            const storedFileName = `${userId}-${timestamp}-${randomString}-${index}.${fileExtension}`;
 
-      // Upload each file
-      for (const file of files) {
-        // Generate unique file name
-        const timestamp = Date.now();
-        const randomString = Math.random().toString(36).substring(2, 15);
-        const fileExtension = file.originalname.split('.').pop();
-        const fileName = `${userId}-${timestamp}-${randomString}.${fileExtension}`;
+            await this.s3Client.send(
+              new PutObjectCommand({
+                Bucket: this.bucketName,
+                Key: storedFileName,
+                Body: file.buffer,
+                ContentType: file.mimetype,
+                CacheControl: 'public, max-age=31536000',
+              }),
+            );
 
-        // Upload to Cloudflare R2
-        const uploadCommand = new PutObjectCommand({
-          Bucket: this.bucketName,
-          Key: fileName,
-          Body: file.buffer,
-          ContentType: file.mimetype,
-          CacheControl: 'public, max-age=31536000',
-        });
+            return {
+              url: `${this.r2Region}/${storedFileName}`,
+              originalName: file.originalname,
+              index,
+            };
+          } catch (error) {
+            return null;
+          }
+        })();
+      });
 
-        await this.s3Client.send(uploadCommand);
+      const results = await Promise.allSettled(uploadPromises);
+      const successfulUploads = results
+        .map((r) => (r.status === 'fulfilled' ? r.value : null))
+        .filter((r): r is { url: string; originalName: string; index: number } => r !== null)
+        .sort((a, b) => a.index - b.index);
 
-        // Get file type
-        const fileType = this.getFileType(file.mimetype);
-
-        // Save to database with full public URL
-        const fileEntity = this.fileRepository.create({
-          user: user,
-          fileUrl: `${this.r2Region}/${fileName}`,
-          fileName: file.originalname,
-          fileSize: file.size,
-          mimeType: file.mimetype,
-          fileType,
-          status: 'active',
-        });
-
-        const savedFile = await this.fileRepository.save(fileEntity);
-        uploadedFiles.push(savedFile);
+      if (successfulUploads.length === 0) {
+        throw new BadRequestException('All files failed to upload');
       }
 
-      return uploadedFiles;
+      const fileEntity = this.fileRepository.create({
+        user: user,
+        fileUrls: successfulUploads.map((u) => u.url),
+        fileName: successfulUploads[0].originalName,
+        thumbnailUrl: successfulUploads[0].url,
+        status: 'active',
+      });
+
+      const savedFile = await this.fileRepository.save(fileEntity);
+      return [savedFile];
     } catch (error) {
-      console.error('Error uploading files to R2:', error);
+      if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Failed to upload files');
     }
   }
@@ -219,7 +189,6 @@ export class FilesService {
         }
       } catch (error) {
         // Invalid cursor, ignore it
-        console.warn('Invalid cursor provided:', error);
       }
     }
 
@@ -281,16 +250,17 @@ export class FilesService {
 
   /**
    * Delete multiple files (hard delete - permanent delete)
+   * Deletes all files from R2 in parallel, then removes from database
    */
-  async deleteFiles(fileIds: string[], userId: string): Promise<void> {
-    if (!fileIds || fileIds.length === 0) {
+  async deleteFiles(deleteFilesDto: DeleteFilesDto, userId: string): Promise<void> {
+    if (!deleteFilesDto.fileIds || deleteFilesDto.fileIds.length === 0) {
       throw new BadRequestException('No file IDs provided');
     }
 
     // Get all files that belong to the user
     const files = await this.fileRepository.find({
       where: {
-        id: In(fileIds),
+        id: In(deleteFilesDto.fileIds),
         user: { id: userId },
       },
     });
@@ -301,7 +271,7 @@ export class FilesService {
 
     // Verify all requested files were found
     const foundIds = files.map((f) => f.id);
-    const notFoundIds = fileIds.filter((id) => !foundIds.includes(id));
+    const notFoundIds = deleteFilesDto.fileIds.filter((id) => !foundIds.includes(id));
     if (notFoundIds.length > 0) {
       throw new NotFoundException(
         `Files not found: ${notFoundIds.join(', ')}`,
@@ -309,35 +279,271 @@ export class FilesService {
     }
 
     try {
-      // Delete from Cloudflare R2
-      for (const file of files) {
-        // Extract file key from public URL
-        const fileKey = file.fileUrl.split('/')[file.fileUrl.split('/').length - 1];
-        console.log('🗑️  Deleting file from R2:', fileKey);
+      // Collect all file keys from all file URLs to delete
+      const fileKeysToDelete: string[] = [];
+      files.forEach((file) => {
+        const urls = Array.isArray(file.fileUrls) ? file.fileUrls : [];
+        urls.forEach((url) => {
+          // Extract file key from public URL (format: region/filename)
+          const parts = url.split('/');
+          const fileKey = parts[parts.length - 1];
+          if (fileKey) {
+            fileKeysToDelete.push(fileKey);
+          }
+        });
+      });
 
+      const deletePromises = fileKeysToDelete.map(async (fileKey) => {
         try {
-          const deleteCommand = new DeleteObjectCommand({
-            Bucket: this.bucketName,
-            Key: fileKey,
-          });
-
-          await this.s3Client.send(deleteCommand);
-          console.log('✅ File deleted from R2:', fileKey);
+          await this.s3Client.send(
+            new DeleteObjectCommand({
+              Bucket: this.bucketName,
+              Key: fileKey,
+            }),
+          );
         } catch (error) {
-          console.error(`❌ Error deleting file ${fileKey} from R2:`, error);
           // Continue with other files even if one fails
         }
-      }
+      });
 
-      // Hard delete from database
+      await Promise.allSettled(deletePromises);
       await this.fileRepository.remove(files);
-      console.log(`✅ ${files.length} file(s) deleted from database`);
     } catch (error) {
-      console.error('❌ Error deleting files:', error);
       throw new BadRequestException(
         'Failed to delete files: ' + (error.message || 'Unknown error'),
       );
     }
+  }
+
+  /**
+   * Process all images from file URLs and create a merged PDF
+   * 1. Merge all images directly from URLs into one PDF (no extraction)
+   * 2. Upload PDF to Cloudflare R2
+   * 3. Return PDF URL
+   */
+  async convertToPdf(fileId: string, userId: string): Promise<string> {
+    // Get file by ID and verify ownership
+    const file = await this.fileRepository.findOne({
+      where: { id: fileId, user: { id: userId } },
+    });
+
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+
+    const urls = Array.isArray(file.fileUrls) ? file.fileUrls : [];
+    if (urls.length === 0) {
+      throw new BadRequestException('No image URLs found in file');
+    }
+
+    // Create temporary directory for processing
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-process-'));
+    
+    // Detect Python path - try venv first, then system python3
+    let pythonVenv = process.env.PYTHON_VENV_PATH || '/app/venv/bin/python3';
+    if (!fs.existsSync(pythonVenv)) {
+      pythonVenv = 'python3';
+    }
+    
+    const scriptsPath = path.join(process.cwd(), 'scripts');
+
+    try {
+      // Merge all images directly from URLs into one PDF
+      const pdfPath = path.join(tempDir, 'merged.pdf');
+      const mergeScriptPath = path.join(scriptsPath, 'merge_images_to_pdf.py');
+      const urlsStr = urls.map((u) => `"${u}"`).join(' ');
+      
+      await execAsync(
+        `${pythonVenv} ${mergeScriptPath} "${pdfPath}" ${urlsStr}`,
+        { timeout: 120000 }, // 2 minutes timeout
+      );
+
+      if (!fs.existsSync(pdfPath)) {
+        throw new BadRequestException('Failed to create PDF');
+      }
+
+      // Upload PDF to Cloudflare R2
+      const pdfBuffer = fs.readFileSync(pdfPath);
+      const timestamp = Date.now();
+      const randomString = Math.random().toString(36).substring(2, 15);
+      const pdfFileName = `${userId}-${timestamp}-${randomString}.pdf`;
+
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: pdfFileName,
+          Body: pdfBuffer,
+          ContentType: 'application/pdf',
+          CacheControl: 'public, max-age=31536000',
+        }),
+      );
+
+      const pdfUrl = `${this.r2Region}/${pdfFileName}`;
+
+      return pdfUrl;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'Failed to convert to PDF: ' + (error.message || 'Unknown error'),
+      );
+    } finally {
+      // Cleanup temporary directory
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (error) {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
+   * Process all images from file URLs and create a merged scanned PDF (black & white)
+   * 1. Scan all images directly from URLs (grayscale, denoise, threshold) and merge into one PDF
+   * 2. Upload PDF to Cloudflare R2
+   * 3. Return PDF URL
+   */
+  async convertToScan(fileId: string, userId: string): Promise<string> {
+    // Get file by ID and verify ownership
+    const file = await this.fileRepository.findOne({
+      where: { id: fileId, user: { id: userId } },
+    });
+
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+
+    const urls = Array.isArray(file.fileUrls) ? file.fileUrls : [];
+    if (urls.length === 0) {
+      throw new BadRequestException('No image URLs found in file');
+    }
+
+    // Create temporary directory for processing
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-process-'));
+    
+    // Detect Python path - try venv first, then system python3
+    let pythonVenv = process.env.PYTHON_VENV_PATH || '/app/venv/bin/python3';
+    if (!fs.existsSync(pythonVenv)) {
+      pythonVenv = 'python3';
+    }
+    
+    const scriptsPath = path.join(process.cwd(), 'scripts');
+
+    try {
+      // Scan all images directly from URLs and merge into one PDF
+      const pdfPath = path.join(tempDir, 'merged_scan.pdf');
+      const mergeScriptPath = path.join(scriptsPath, 'merge_images_to_scan.py');
+      const urlsStr = urls.map((u) => `"${u}"`).join(' ');
+      
+      await execAsync(
+        `${pythonVenv} ${mergeScriptPath} "${pdfPath}" ${urlsStr}`,
+        { timeout: 120000 }, // 2 minutes timeout
+      );
+
+      if (!fs.existsSync(pdfPath)) {
+        throw new BadRequestException('Failed to create scanned PDF');
+      }
+
+      // Upload PDF to Cloudflare R2
+      const pdfBuffer = fs.readFileSync(pdfPath);
+      const timestamp = Date.now();
+      const randomString = Math.random().toString(36).substring(2, 15);
+      const pdfFileName = `${userId}-${timestamp}-${randomString}-scan.pdf`;
+
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: pdfFileName,
+          Body: pdfBuffer,
+          ContentType: 'application/pdf',
+          CacheControl: 'public, max-age=31536000',
+        }),
+      );
+
+      const pdfUrl = `${this.r2Region}/${pdfFileName}`;
+
+      return pdfUrl;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        'Failed to convert to scanned PDF: ' + (error.message || 'Unknown error'),
+      );
+    } finally {
+      // Cleanup temporary directory
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (error) {
+        // Ignore cleanup errors
+      }
+    }
+  }
+
+  /**
+   * Merge multiple files into a single file
+   * Combines all fileUrls from all files into one new file
+   */
+  async mergeFiles(mergeFilesDto: MergeFilesDto, userId: string): Promise<File> {
+    if (!mergeFilesDto.fileIds || mergeFilesDto.fileIds.length === 0) {
+      throw new BadRequestException('No file IDs provided');
+    }
+
+    // Get all files that belong to the user
+    const files = await this.fileRepository.find({
+      where: {
+        id: In(mergeFilesDto.fileIds),
+        user: { id: userId },
+      },
+    });
+
+    if (files.length === 0) {
+      throw new NotFoundException('No files found');
+    }
+
+    // Verify all requested files were found
+    const foundIds = files.map((f) => f.id);
+    const notFoundIds = mergeFilesDto.fileIds.filter((id) => !foundIds.includes(id));
+    if (notFoundIds.length > 0) {
+      throw new NotFoundException(
+        `Files not found: ${notFoundIds.join(', ')}`,
+      );
+    }
+
+    // Collect all fileUrls from all files
+    const allFileUrls: string[] = [];
+    files.forEach((file) => {
+      const urls = Array.isArray(file.fileUrls) ? file.fileUrls : [];
+      allFileUrls.push(...urls);
+    });
+
+    if (allFileUrls.length === 0) {
+      throw new BadRequestException('No image URLs found in files to merge');
+    }
+
+    // Get user for the new file
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Create new file with merged URLs
+    // Use first file's name and thumbnail as default
+    const firstFile = files[0];
+    const firstFileUrl = allFileUrls[0];
+
+    const mergedFile = this.fileRepository.create({
+      user: user,
+      fileUrls: allFileUrls,
+      fileName: firstFile.fileName,
+      thumbnailUrl: firstFile.thumbnailUrl || firstFileUrl,
+      status: 'active',
+    });
+
+    const savedFile = await this.fileRepository.save(mergedFile);
+
+    return savedFile;
   }
 }
 

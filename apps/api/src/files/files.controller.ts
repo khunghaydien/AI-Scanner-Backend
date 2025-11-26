@@ -18,7 +18,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '@app/auth';
 import { ResponseDto } from '@app/common';
-import { FilesService, UpdateFileDto, DeleteFilesDto, GetFilesDto } from '@app/files';
+import { FilesService, UpdateFileDto, DeleteFilesDto, GetFilesDto, MergeFilesDto } from '@app/files';
 
 @Controller('files')
 @UseGuards(JwtAuthGuard)
@@ -64,6 +64,17 @@ export class FilesController {
     return ResponseDto.success(totalCount, 'Total files count retrieved successfully');
   }
 
+  @Post('merge')
+  @HttpCode(HttpStatus.CREATED)
+  async mergeFiles(@Request() req: any, @Body() mergeDto: MergeFilesDto) {
+    const userId = req.user.id;
+    const mergedFile = await this.filesService.mergeFiles(mergeDto, userId);
+    return ResponseDto.created(
+      mergedFile,
+      `Successfully merged ${mergeDto.fileIds.length} file(s) into one file`,
+    );
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async getFileById(@Request() req: any, @Param('id') fileId: string) {
@@ -91,11 +102,34 @@ export class FilesController {
     @Body() deleteDto: DeleteFilesDto,
   ) {
     const userId = req.user.id;
-    await this.filesService.deleteFiles(deleteDto.fileIds, userId);
+    await this.filesService.deleteFiles(deleteDto, userId);
     return ResponseDto.success(
       {},
       `Successfully deleted ${deleteDto.fileIds.length} file(s)`,
     );
   }
+
+  @Post(':id/to-pdf')
+  @HttpCode(HttpStatus.OK)
+  async convertToPdf(@Request() req: any, @Param('id') fileId: string) {
+    const userId = req.user.id;
+    const pdfUrl = await this.filesService.convertToPdf(fileId, userId);
+    return ResponseDto.success(
+      { pdfUrl },
+      'Successfully converted images to PDF',
+    );
+  }
+
+  @Post(':id/to-scan')
+  @HttpCode(HttpStatus.OK)
+  async convertToScan(@Request() req: any, @Param('id') fileId: string) {
+    const userId = req.user.id;
+    const pdfUrl = await this.filesService.convertToScan(fileId, userId);
+    return ResponseDto.success(
+      { pdfUrl },
+      'Successfully converted images to scanned PDF',
+    );
+  }
+
 }
 

@@ -10,6 +10,8 @@ import cv2
 import numpy as np
 from rembg import remove
 from PIL import Image
+import requests
+from urllib.parse import urlparse
 
 
 def is_dark_background(image):
@@ -204,9 +206,22 @@ if __name__ == "__main__":
     output_path = sys.argv[2]
 
     try:
-        image = cv2.imread(input_path)
-        if image is None:
-            raise ValueError(f"Could not read image from {input_path}")
+        # === Check if input is URL or file path ===
+        parsed = urlparse(input_path)
+        is_url = parsed.scheme in ('http', 'https')
+        
+        # === Read image from URL or file ===
+        if is_url:
+            response = requests.get(input_path, timeout=30)
+            response.raise_for_status()
+            nparr = np.frombuffer(response.content, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError(f"Could not decode image from URL: {input_path}")
+        else:
+            image = cv2.imread(input_path)
+            if image is None:
+                raise ValueError(f"Could not read image from {input_path}")
 
         cropped = extract_main_object(image)
         
