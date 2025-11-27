@@ -17,11 +17,11 @@ def preload_models():
     dummy_img = Image.new('RGB', (100, 100), color='white')
     
     # List of model types to preload
-    # Focus on models that are commonly used for document extraction
+    # Focus on models that are actually used in the codebase
+    # extract_image.py uses remove() with default model (u2net)
     models = [
-        'u2net',              # Default model (most common, used by default remove())
-        'u2netp',             # Lightweight version (backup)
-        'isnet-general-use',  # General use model (good for documents)
+        'u2net',   # Default model (used by remove() in extract_image.py)
+        'u2netp',  # Lightweight version (backup, smaller model)
     ]
     
     for model_name in models:

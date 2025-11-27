@@ -40,6 +40,8 @@ def download_image_from_url(url: str) -> np.ndarray:
 def create_a4_page_from_image(pil_image: Image.Image, dpi: int = 300) -> Image.Image:
     """
     Create an A4 page with image centered on white background.
+    Scale ảnh để vừa khung A4: nếu ảnh nhỏ thì scale up, nếu ảnh to thì scale down.
+    Dừng khi chạm width hoặc height, luôn giữ nguyên tỷ lệ khung hình.
     
     Args:
         pil_image: PIL Image to place on A4 page
@@ -61,9 +63,22 @@ def create_a4_page_from_image(pil_image: Image.Image, dpi: int = 300) -> Image.I
     
     img_width, img_height = pil_image.size
     
-    # Center image on A4 (keep original size, may crop edges if too large)
-    x_offset_px = max(0, (a4_width_px - img_width) // 2)
-    y_offset_px = max(0, (a4_height_px - img_height) // 2)
+    # Tính tỷ lệ scale cho cả width và height
+    # Lấy min để đảm bảo ảnh vừa khung (dừng khi chạm width hoặc height)
+    scale_ratio_width = a4_width_px / img_width
+    scale_ratio_height = a4_height_px / img_height
+    scale_ratio = min(scale_ratio_width, scale_ratio_height)
+    
+    # Scale ảnh theo tỷ lệ (scale up nếu nhỏ, scale down nếu to)
+    new_width = int(img_width * scale_ratio)
+    new_height = int(img_height * scale_ratio)
+    
+    # Resize ảnh giữ nguyên tỷ lệ khung hình
+    pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # Center image on A4
+    x_offset_px = (a4_width_px - new_width) // 2
+    y_offset_px = (a4_height_px - new_height) // 2
     a4_background.paste(pil_image, (x_offset_px, y_offset_px))
     
     return a4_background

@@ -38,49 +38,21 @@ def download_image_from_url(url: str) -> np.ndarray:
 
 def scan_image_to_pil(image: np.ndarray) -> Image.Image:
     """
-    Process image to create a scanned document effect (grayscale, denoised, thresholded).
+    Chuyển ảnh sang đen trắng (grayscale).
     
     Args:
         image: Input BGR image (OpenCV format)
     Returns:
-        PIL Image with scanned effect (black and white)
+        PIL Image in grayscale (black and white)
     """
     # === Convert to grayscale ===
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # === Normalize background (flatten uneven lighting) ===
-    bg = cv2.medianBlur(gray, 21)
-    normalized = cv2.divide(gray, bg, scale=255)
-
-    # === Denoise to remove grain and small dots ===
-    denoised = cv2.fastNlMeansDenoising(normalized, None, h=15, templateWindowSize=7, searchWindowSize=21)
-
-    # === Slight blur to smooth edges ===
-    blurred = cv2.GaussianBlur(denoised, (5, 5), 0)
-
-    # === Adaptive threshold to create clean binary (black-white) image ===
-    thresh = cv2.adaptiveThreshold(
-        blurred,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        11,
-        2
-    )
-
-    # === Morphological cleaning: remove small noise, strengthen text ===
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    opened = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_open, iterations=1)
-
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    cleaned = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel_close, iterations=1)
-
     # === Convert to PIL image ===
-    pil_image = Image.fromarray(cleaned)
+    pil_image = Image.fromarray(gray)
     
-    # Ensure RGB mode
-    if pil_image.mode != 'RGB':
-        pil_image = pil_image.convert('RGB')
+    # Convert to RGB mode (grayscale as RGB)
+    pil_image = pil_image.convert('RGB')
     
     return pil_image
 

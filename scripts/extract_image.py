@@ -77,8 +77,7 @@ def extract_main_object(image):
     # - Nếu ảnh > max_dimension → resize xuống max_dimension (giữ tỷ lệ)
     # - Sau khi xử lý xong → scale lại kết quả về tỷ lệ tương ứng với ảnh gốc
     # - Kích thước lớn hơn = chính xác hơn nhưng tốn nhiều memory hơn
-    # - Với 1GB RAM trên Railway: nên dùng 500-600px để cân bằng giữa chất lượng và memory
-    max_dimension = 1920 # 500px: cân bằng tốt cho 1GB RAM (chính xác đủ + không OOM)
+    max_dimension = 1920 
     scale = 1.0
     resized_image = image
     original_h, original_w = h, w
