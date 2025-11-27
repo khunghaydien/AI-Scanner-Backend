@@ -37,7 +37,7 @@ export class AuthController {
     const result = await this.authService.signIn(signInDto);
     const tokens = await this.authService.generateTokensForUser(result.user.id);
     this.cookieService.setTokens(res, tokens);
-    return ResponseDto.success(result, 'sign_in_successful');
+    return ResponseDto.success(tokens, 'sign_in_successful');
   }
 
   @Post('refresh')
@@ -74,7 +74,18 @@ export class AuthController {
     const result = await this.authService.handleGoogleCallback(code as string);
     const tokens = await this.authService.generateTokensForUser(result.user.id);
     this.cookieService.setTokens(res, tokens);
-    res.redirect(process.env.FRONTEND_URL || '');
+    
+    // Build redirect URL with tokens as query params
+    const frontendUrl = process.env.FRONTEND_URL || '';
+    try {
+      const redirectUrl = new URL(frontendUrl);
+      redirectUrl.searchParams.set('accessToken', tokens.accessToken);
+      redirectUrl.searchParams.set('refreshToken', tokens.refreshToken);
+      res.redirect(redirectUrl.toString());
+    } catch (error) {
+      // Fallback if FRONTEND_URL is invalid, just redirect without query params
+      res.redirect(frontendUrl);
+    }
   }
 
   @Get('me')
