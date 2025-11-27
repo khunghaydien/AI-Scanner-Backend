@@ -482,6 +482,88 @@ export class FilesService {
   }
 
   /**
+   * Add images to an existing file
+   * Uploads new images and merges their URLs into the existing file's fileUrls
+   */
+  async addImagesToFile(
+    fileId: string,
+    userId: string,
+    files: Express.Multer.File[],
+  ): Promise<File> {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('No files provided');
+    }
+
+    // Validate file types - only images allowed
+    for (const file of files) {
+      if (!this.allowedMimeTypes.includes(file.mimetype)) {
+        throw new BadRequestException(
+          `Invalid file type: ${file.originalname}. Only image files are allowed (JPEG, PNG, GIF, WebP, BMP, SVG).`,
+        );
+      }
+    }
+
+    // Get file by ID and verify ownership
+    const file = await this.getFileById(fileId, userId);
+
+    try {
+      // Upload new files to R2 (reuse upload logic)
+      const uploadPromises = files.map((file, index) => {
+        return (async () => {
+          try {
+            const timestamp = Date.now();
+            const randomString = Math.random().toString(36).substring(2, 15);
+            const fileExtension = file.originalname.split('.').pop();
+            const storedFileName = `${userId}-${timestamp}-${randomString}-${index}.${fileExtension}`;
+
+            await this.s3Client.send(
+              new PutObjectCommand({
+                Bucket: this.bucketName,
+                Key: storedFileName,
+                Body: file.buffer,
+                ContentType: file.mimetype,
+                CacheControl: 'public, max-age=31536000',
+              }),
+            );
+
+            return {
+              url: `${this.r2Region}/${storedFileName}`,
+              originalName: file.originalname,
+              index,
+            };
+          } catch (error) {
+            return null;
+          }
+        })();
+      });
+
+      const results = await Promise.allSettled(uploadPromises);
+      const successfulUploads = results
+        .map((r) => (r.status === 'fulfilled' ? r.value : null))
+        .filter((r): r is { url: string; originalName: string; index: number } => r !== null)
+        .sort((a, b) => a.index - b.index);
+
+      if (successfulUploads.length === 0) {
+        throw new BadRequestException('All files failed to upload');
+      }
+
+      // Merge new URLs with existing fileUrls
+      const existingUrls = Array.isArray(file.fileUrls) ? file.fileUrls : [];
+      const newUrls = successfulUploads.map((u) => u.url);
+      file.fileUrls = [...existingUrls, ...newUrls];
+
+      // Update file in database
+      const updatedFile = await this.fileRepository.save(file);
+      return updatedFile;
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException('Failed to add images to file');
+    }
+  }
+
+  /**
    * Merge multiple files into a single file
    * Combines all fileUrls from all files into one new file
    */

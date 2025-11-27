@@ -131,5 +131,21 @@ export class FilesController {
     );
   }
 
+  @Post(':id/images')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FilesInterceptor('files', 50)) // Max 50 files per request
+  async addImagesToFile(
+    @Request() req: any,
+    @Param('id') fileId: string,
+    @UploadedFiles(new ParseFilePipe({ fileIsRequired: true }))
+    files: Express.Multer.File[],
+  ) {
+    const userId = req.user.id;
+    const result = await this.filesService.addImagesToFile(fileId, userId, files);
+    return ResponseDto.success(
+      result,
+      `Successfully added ${files.length} image(s) to file`,
+    );
+  }
 }
 
